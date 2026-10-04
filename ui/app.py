@@ -1,18 +1,6 @@
 """magi-C Lexical Analyzer -- single-file Flask web app.
 
 Run with:   python ui/app.py        ->  http://localhost:5000
-
-Strictly lexical: the server hands raw source to ``Lexer(source).tokenize()``
-and serialises the resulting tokens.  No parsing, grammar checks, ASTs or
-execution logic exist anywhere in this file.
-
-Routes
-------
-GET  /           the single-page UI (``PAGE``, below)
-POST /tokenize   {"code": <source>}  ->  {"ok", "tokens", "error"}
-
-All HTML / CSS / JS is inlined through ``render_template_string`` -- there are
-no ``templates/`` or ``static/`` directories to deploy.
 """
 
 from __future__ import annotations
@@ -30,6 +18,26 @@ if _PROJECT_ROOT not in sys.path:
 from Lexer import Lexer, LexerError          # noqa: E402  (path set above)
 
 app = Flask(__name__)
+
+# --- Sample program (lexically valid; preloaded into the editor at boot) --- #
+SAMPLE_PROGRAM = '''#/ Program Initialization /#
+#conjure "combat"~
+
+circle Mage {
+    spell aether health[3] = {100, 75, 50}~
+    essence mana = 25.5~
+    glyph rank = 'S'~
+    aura isAlive = blessed~
+}~
+
+grimoire() {
+    manifest (mana != 0.0) {
+        mana -= 5.0~
+    } counter {
+        shatter~
+    }
+}
+'''
 
 
 # --- Helpers --------------------------------------------------------------- #
@@ -58,7 +66,7 @@ def inner_message(exc: LexerError) -> str:
 # --- Routes ---------------------------------------------------------------- #
 @app.get("/")
 def index():
-    return render_template_string(PAGE)
+    return render_template_string(PAGE, sample_program=SAMPLE_PROGRAM)
 
 
 @app.post("/tokenize")
@@ -390,6 +398,7 @@ PAGE = r"""<!doctype html>
     <nav class="tabs">
       <span class="tab active">LEXICAL</span>
     </nav>
+    <div class="meta">ARCHIMEL &middot; v1.0</div>
   </header>
 
   <main class="workspace">
@@ -446,6 +455,10 @@ PAGE = r"""<!doctype html>
   // Must match the line-height:22px used by .gutter and #code in the CSS above,
   // otherwise the gutter numbers drift out of sync with the code as you scroll.
   var LINE_H = 22;
+
+  // Server-rendered sample program; Jinja's ``tojson`` escapes it safely into
+  // a JS string literal (no manual quoting needed).
+  var SAMPLE = {{ sample_program | tojson }};
 
   var codeEl     = document.getElementById("code");
   var gutterEl   = document.getElementById("gutter");
@@ -651,9 +664,9 @@ PAGE = r"""<!doctype html>
   runBtn.addEventListener("click", analyze);
 
   /* ------------------------------- boot --------------------------------- */
-  // Start with a blank editor: just lay out the empty gutter and token table.
+  codeEl.value = SAMPLE;
   updateGutter();
-  renderTokens([]);
+  analyze();
 })();
 </script>
 </body>
