@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sys
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
 # --- make ``Lexer.py`` (one level up) importable, however we are launched --- #
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,25 +19,8 @@ from Lexer import Lexer, LexerError          # noqa: E402  (path set above)
 
 app = Flask(__name__)
 
-# --- Sample program (lexically valid; preloaded into the editor at boot) --- #
-SAMPLE_PROGRAM = '''#/ Program Initialization /#
-#conjure "combat"~
-
-circle Mage {
-    spell aether health[3] = {100, 75, 50}~
-    essence mana = 25.5~
-    glyph rank = 'S'~
-    aura isAlive = blessed~
-}~
-
-grimoire() {
-    manifest (mana != 0.0) {
-        mana -= 5.0~
-    } counter {
-        shatter~
-    }
-}
-'''
+# --- Editor starts blank (no preloaded sample program) --- #
+SAMPLE_PROGRAM = ""
 
 
 # --- Helpers --------------------------------------------------------------- #
@@ -67,6 +50,18 @@ def inner_message(exc: LexerError) -> str:
 @app.get("/")
 def index():
     return render_template_string(PAGE, sample_program=SAMPLE_PROGRAM)
+
+
+@app.get("/logo-topleft.png")
+def serve_logo_topleft():
+    """Top-left navbar mark, served from the project root."""
+    return send_from_directory(_PROJECT_ROOT, "LOGO TOPLEFT.png")
+
+
+@app.get("/middle.png")
+def serve_middle_logo():
+    """Centered navbar wordmark, served from the project root."""
+    return send_from_directory(_PROJECT_ROOT, "MIDDLE.png")
 
 
 @app.post("/tokenize")
@@ -133,18 +128,24 @@ PAGE = r"""<!doctype html>
 <title>magi-C &middot; Lexical Analyzer</title>
 <style>
   :root {
-    --parchment: #F4F1EA;
+    --parchment: #F6F3FB;
     --panel: #FFFFFF;
-    --header: #F7F5EE;
-    --ink: #000000;
-    --emerald: #0E9F6E;
-    --crimson: #D92D4B;
-    --violet: #7C3AED;
-    --teal: #0E7C8A;
-    --muted: #6B6B63;
-    --faint: #A9A493;
-    --rule: #E7E4DA;
+    --header: #F0EAFB;
+    --ink: #3E236E;
+    --ink-strong: #1E1035;
+    --royal: #51308B;
+    --nav: #5A398A;
+    --gold: #F5D166;
+    --emerald: #10B981;
+    --emerald-text: #059669;
+    --crimson: #DC2626;
+    --violet: #8B5CF6;
+    --teal: #3E236E;
+    --muted: #51308B;
+    --faint: #8E7BC0;
+    --rule: #E4DCF5;
     --shadow: 4px 4px 0 var(--ink);
+    --shadow-strong: 4px 4px 0 var(--ink-strong);
     --mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, "Courier New", monospace;
   }
 
@@ -154,7 +155,7 @@ PAGE = r"""<!doctype html>
 
   body {
     background: var(--parchment);
-    color: #141414;
+    color: #1E1035;
     font-family: var(--mono);
     -webkit-font-smoothing: antialiased;
     /* scale the whole layout up so it fills the screen at 100% browser zoom */
@@ -173,21 +174,58 @@ PAGE = r"""<!doctype html>
 
   /* ---------------- navigation ---------------- */
   .nav {
+    position: relative;             /* anchors the absolutely-centered middle mark */
     flex: none;
     display: flex;
     align-items: center;
     gap: 16px;
     padding: 10px 16px;
-    background: var(--panel);
-    border: 3px solid var(--ink);
-    box-shadow: var(--shadow);
+    background: var(--nav);
+    border: 3px solid var(--ink-strong);
+    box-shadow: var(--shadow-strong);
   }
 
-  .brand { display: flex; align-items: baseline; gap: 10px; }
-  .mark { font-size: 24px; line-height: 1; color: var(--violet); }
-  .name { font-size: 20px; font-weight: 800; letter-spacing: .5px; color: var(--teal); }
-  .sub { font-size: 9px; font-weight: 700; letter-spacing: 2px; color: var(--faint); }
-  .meta { font-size: 10px; letter-spacing: 1px; color: var(--faint); margin-left: 4px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+
+  /* Both PNGs are >=90% flat #5A398A padding — pixel-identical to the nav fill —
+     so at their natural aspect the actual artwork is a tiny speck floating in a
+     big empty purple box (which is exactly the "empty navbar" symptom). Crop to
+     the artwork band and scale it up: each slot clips its padding via
+     overflow:hidden and negative margins centre the oversized img on the art.
+       LOGO TOPLEFT.png 682x685 : art x[168..523] y[187..498] = 356x312
+       MIDDLE.png       685x204 : art x[157..545] y[ 45..166] = 389x122
+     Any overflow is the same purple as the bar, so edges never show a seam. */
+  .brand-slot {
+    flex: none;
+    width: 76px;
+    height: 62px;
+    overflow: hidden;                 /* clips padding; also stops margin collapse */
+  }
+  .brand-slot img {
+    display: block;
+    height: 136.1px;                  /* 62 * 685/312 -> art fills the 62px slot */
+    width: auto;                      /* renders 135.5px wide, art 70.7px */
+    margin: -37.05px 0 0 -30.6px;     /* centres the 70.7x62 art in the 76x62 slot */
+  }
+
+  /* Wordmark slot, dead-centred in the bar. Absolute + symmetric negative
+     margins centre it deterministically (no transform, no flex-overflow quirks). */
+  .nav-mid-slot {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    margin: -20px 0 0 -68px;          /* exact centre: -(h/2) -(w/2) */
+    width: 136px;
+    height: 40px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .nav-mid-slot img {
+    display: block;
+    height: 66.9px;                   /* 40 * 204/122 -> art fills the 40px slot */
+    width: auto;                      /* renders 224.6px wide, art 127.6px */
+    margin: -14.6px 0 0 -47.1px;      /* centres the 127.6x40 art in the 136x40 slot */
+  }
 
   .tabs { display: flex; gap: 12px; margin-left: auto; }
 
@@ -196,14 +234,15 @@ PAGE = r"""<!doctype html>
     font-size: 12px;
     font-weight: 800;
     letter-spacing: 1px;
-    border: 3px solid var(--ink);
+    color: #FFFFFF;
+    border: 3px solid var(--ink-strong);
     user-select: none;
   }
-  .tab.active { background: #00F0FF; color: var(--ink); box-shadow: var(--shadow); }
+  .tab.active { background: var(--violet); color: var(--ink-strong); box-shadow: var(--shadow-strong); }
   .tab.disabled {
-    background: #EDEAE1;
-    color: #A9A493;
-    border-color: #BDB8A8;
+    background: #EDE7F9;
+    color: var(--royal);
+    border-color: #B9A7E0;
     cursor: not-allowed;
   }
 
@@ -233,7 +272,7 @@ PAGE = r"""<!doctype html>
     gap: 12px;
     padding: 10px 14px;
     background: var(--panel);
-    border-bottom: 3px solid var(--ink);
+    border-bottom: 3px solid var(--royal);
   }
   .pane-header h2 {
     margin: 0;
@@ -242,7 +281,6 @@ PAGE = r"""<!doctype html>
     letter-spacing: 1px;
     color: var(--teal);
   }
-  .pane-tokens .pane-header h2 { color: var(--violet); }
 
   .actions { display: flex; gap: 10px; margin-left: auto; }
 
@@ -263,8 +301,8 @@ PAGE = r"""<!doctype html>
   .btn:hover:not(:disabled) { filter: brightness(.95); }
   .btn:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--ink); }
   .btn:disabled { cursor: wait; opacity: .6; }
-  .btn.primary { background: #00F0FF; }
-  .btn.violet { background: #A855F7; color: #fff; }
+  .btn.primary { background: var(--gold); color: #000000; }
+  .btn.violet { background: #6D28D9; color: #fff; }
 
   /* ---------------- editor ---------------- */
   .editor { flex: 1; min-height: 0; display: flex; background: var(--panel); }
@@ -293,7 +331,7 @@ PAGE = r"""<!doctype html>
     outline: 0;
     resize: none;
     background: var(--panel);
-    color: #141414;
+    color: #1E1035;
     font-family: inherit;
     font-size: 14px;
     line-height: 22px;
@@ -301,7 +339,7 @@ PAGE = r"""<!doctype html>
     white-space: pre;
     overflow: auto;
   }
-  #code::selection { background: #00F0FF; color: var(--ink); }
+  #code::selection { background: var(--gold); color: #000000; }
 
   /* ---------------- token table ---------------- */
   .table-wrap { flex: 1; min-height: 0; overflow: auto; }
@@ -317,14 +355,14 @@ PAGE = r"""<!doctype html>
     font-size: 11px;
     font-weight: 800;
     letter-spacing: 1px;
-    color: var(--teal);
-    background: var(--header);
+    color: #FFFFFF;
+    background: var(--violet);
     border-bottom: 3px solid var(--ink);
   }
 
   tbody td { padding: 6px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-  tbody tr.alt { background: #FBFAF6; }
-  tbody tr:hover { background: #F0FBFD; }
+  tbody tr.alt { background: #F4F0FC; }
+  tbody tr:hover { background: #EDE7F9; }
   td.num { text-align: center; color: var(--muted); }
   td.lex { font-weight: 600; }
   td.type { font-weight: 700; }
@@ -348,13 +386,13 @@ PAGE = r"""<!doctype html>
     min-height: 0;
     overflow: auto;
     padding: 10px 14px;
-    background: #FBFAF6;
+    background: #F4F0FC;
     font-size: 12.5px;
     line-height: 1.75;
   }
   .log { white-space: pre-wrap; }
   .log .pre { margin-right: 8px; font-weight: 800; }
-  .log.ok { color: var(--emerald); font-weight: 700; }
+  .log.ok { color: var(--emerald-text); font-weight: 700; }
   .log.err { color: var(--crimson); font-weight: 700; }
   .log.warn { color: #B45309; }
   .log.info { color: var(--muted); }
@@ -366,23 +404,22 @@ PAGE = r"""<!doctype html>
     font-size: 10px;
     font-weight: 800;
     letter-spacing: 1px;
-    background: #00F0FF;
-    color: var(--ink);
-    border: 2px solid var(--ink);
+    background: var(--violet);
+    color: var(--ink-strong);
+    border: 2px solid var(--ink-strong);
   }
-  .badge.idle { background: #EDEAE1; color: var(--muted); border-color: #BDB8A8; }
-  .badge.work { background: #FFC94D; }
-  .badge.ok { background: #39D98A; }
+  .badge.idle { background: #EDE7F9; color: var(--royal); border-color: #B9A7E0; }
+  .badge.work { background: var(--gold); color: var(--ink-strong); }
+  .badge.ok { background: var(--emerald); color: var(--ink-strong); }
   .badge.error { background: var(--crimson); color: #fff; }
 
   /* ---------------- responsive ---------------- */
-  @media (max-width: 1100px) { .sub, .meta { display: none; } }
-
   @media (max-width: 900px) {
     .app { height: auto; }
     .workspace { grid-template-columns: 1fr; grid-template-rows: 420px 420px; }
     .nav { flex-wrap: wrap; }
     .tabs { margin-left: 0; }
+    .nav-mid-slot { display: none; }   /* would collide with the wrapped row */
   }
 </style>
 </head>
@@ -391,14 +428,12 @@ PAGE = r"""<!doctype html>
 
   <header class="nav">
     <div class="brand">
-      <span class="mark">&#9672;</span>
-      <span class="name">magi-C</span>
-      <span class="sub">LEXICAL ANALYZER</span>
+      <div class="brand-slot"><img src="/logo-topleft.png" alt="Magi-C Logo"></div>
     </div>
+    <div class="nav-mid-slot"><img src="/middle.png" alt="Magi-C Lexical Analyzer"></div>
     <nav class="tabs">
       <span class="tab active">LEXICAL</span>
     </nav>
-    <div class="meta">ARCHIMEL &middot; v1.0</div>
   </header>
 
   <main class="workspace">
@@ -417,10 +452,6 @@ PAGE = r"""<!doctype html>
     </section>
 
     <section class="pane pane-tokens">
-      <div class="pane-header">
-        <h2>&#9671; LEXICAL TOKEN STREAM</h2>
-        <span class="badge" id="tokBadge">0 TOKENS</span>
-      </div>
       <div class="table-wrap" id="tableWrap">
         <table>
           <thead>
@@ -456,8 +487,8 @@ PAGE = r"""<!doctype html>
   // otherwise the gutter numbers drift out of sync with the code as you scroll.
   var LINE_H = 22;
 
-  // Server-rendered sample program; Jinja's ``tojson`` escapes it safely into
-  // a JS string literal (no manual quoting needed).
+  // Server-rendered initial editor contents (empty by default); Jinja's
+  // ``tojson`` escapes it safely into a JS string literal (no manual quoting).
   var SAMPLE = {{ sample_program | tojson }};
 
   var codeEl     = document.getElementById("code");
@@ -465,7 +496,6 @@ PAGE = r"""<!doctype html>
   var tokBody    = document.getElementById("tokBody");
   var tableWrap  = document.getElementById("tableWrap");
   var consoleEl  = document.getElementById("consoleEl");
-  var tokBadge   = document.getElementById("tokBadge");
   var statusBadge = document.getElementById("statusBadge");
   var runBtn     = document.getElementById("runBtn");
 
@@ -473,7 +503,7 @@ PAGE = r"""<!doctype html>
 
   /* ---- lexical token-type colours (by type only, never by grammar) ---- */
   var TYPE_COLORS = {
-    KEYWORD: "#7C3AED", IDENTIFIER: "#1F2937", EOF: "#A9A493",
+    KEYWORD: "#7C3AED", IDENTIFIER: "#1F2937", EOF: "#8E7BC0",
     AURA_LIT: "#0E7C8A", NULL_LIT: "#0E7C8A", AETHER_LIT: "#0E7C8A",
     ESSENCE_LIT: "#0E7C8A", GLYPH_LIT: "#0E7C8A", INSCRIPTION_LIT: "#0E7C8A",
     MATH_OP: "#B45309", REL_OP: "#B45309", LOG_OP: "#B45309", NOT_OP: "#B45309",
@@ -485,7 +515,7 @@ PAGE = r"""<!doctype html>
     TERMINATOR: "#BE185D", COMMA: "#BE185D", DOT: "#BE185D", DIRECTIVE_HASH: "#BE185D"
   };
 
-  function typeColor(type) { return TYPE_COLORS[type] || "#6B6B63"; }
+  function typeColor(type) { return TYPE_COLORS[type] || "#51308B"; }
 
   /* Escape control characters so every lexeme stays on one table row.
      EOF carries no source text, so its type name stands in for the value. */
@@ -573,11 +603,6 @@ PAGE = r"""<!doctype html>
     tableWrap.scrollTop = 0;
   }
 
-  function setTokenBadge(count, isError) {
-    tokBadge.textContent = count + (count === 1 ? " TOKEN" : " TOKENS");
-    tokBadge.className = "badge" + (isError ? " error" : "");
-  }
-
   /* ------------------------------ results ------------------------------- */
   function handleResult(data) {
     var tokens = data.tokens || [];
@@ -586,7 +611,6 @@ PAGE = r"""<!doctype html>
       errorLine = data.error.line || 0;
       renderTokens(tokens);
       updateGutter();
-      setTokenBadge(tokens.length, true);
       setStatus("ERROR", "error");
       clearConsole();
       // Fixed diagnostic format:  line #<line>:<col> - <message>
@@ -599,7 +623,6 @@ PAGE = r"""<!doctype html>
     errorLine = 0;
     renderTokens(tokens);
     updateGutter();
-    setTokenBadge(tokens.length, false);
     setStatus("SUCCESS", "ok");
     clearConsole();
     log("ok", "Lexically Successful! 0 Errors. Total Tokens: " + tokens.length);
@@ -613,7 +636,6 @@ PAGE = r"""<!doctype html>
       renderTokens([]);
       errorLine = 0;
       updateGutter();
-      setTokenBadge(0, false);
       setStatus("IDLE", "idle");
       clearConsole();
       log("warn", "Nothing to analyze — the source editor is empty.");
@@ -666,7 +688,7 @@ PAGE = r"""<!doctype html>
   /* ------------------------------- boot --------------------------------- */
   codeEl.value = SAMPLE;
   updateGutter();
-  analyze();
+  renderTokens([]);   // blank editor -> show the empty-state row, don't auto-scan
 })();
 </script>
 </body>
