@@ -6,7 +6,9 @@ Run with:   python ui/app.py        ->  http://localhost:5000
 from __future__ import annotations
 
 import os
+import re
 import sys
+import threading
 
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
@@ -15,16 +17,23 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from Lexer import Lexer, LexerError          # noqa: E402  (path set above)
+import Lexer as lexer_module                     # noqa: E402  (path set above)
+from Lexer import Lexer, LexerError, Token       # noqa: E402  (path set above)
 
 app = Flask(__name__)
+
+# The scanner-only Lexer builds expose ``scan_word`` but no top-level driver, so
+# app.py supplies one here (Lexer.py itself stays untouched).  A scan that never
+# returns (e.g. a keyword-looking prefix with no valid delimiter) is abandoned
+# after this many seconds so the web worker can never hang forever.
+SCAN_TIMEOUT_SECONDS = 5.0
 
 # --- Editor starts blank (no preloaded sample program) --- #
 SAMPLE_PROGRAM = ""
 
 
 # --- Helpers --------------------------------------------------------------- #
-def serialize(tokens) -> list[dict]:
+def serialize(tokens: list[Token]) -> list[dict]:
     """Token -> plain JSON object (exactly type / value / line / column)."""
     return [
         {"type": t.type, "value": t.value, "line": t.line, "column": t.column}
@@ -32,17 +41,82 @@ def serialize(tokens) -> list[dict]:
     ]
 
 
+def _run_lexer(lexer: Lexer) -> list[Token]:
+    """Drive the backend tokenizer and return every token it produced.
+
+    The driver's shape has varied across Lexer builds, so resolve it in order:
+
+      1. ``lexer.tokenize()``             -- bound method / instance attribute
+      2. ``lexer_module.tokenize(lexer)`` -- module-level ``def tokenize(self)``
+      3. scanner-only fallback            -- drive ``scan_word`` directly
+
+    However it is invoked, tokens accumulate on ``lexer.tokens`` as they are
+    emitted, so a mid-scan ``LexerError`` still leaves the partial stream on the
+    instance for the caller to serialize.
+    """
+    # 1) bound method: lexer.tokenize()
+    driver = getattr(lexer, "tokenize", None)
+    if callable(driver):
+        return driver()
+
+    # 2) module-level function: tokenize(self) / lexer_module.tokenize(lexer)
+    driver = getattr(lexer_module, "tokenize", None)
+    if callable(driver):
+        return driver(lexer)
+
+    # 3) last resort for scanner-only builds (no tokenize driver at all): drive
+    #    the exposed scanner ourselves -- skip whitespace (the scanner stops
+    #    *before* a delimiter) and hand every other character to scan_word.
+    whitespace = getattr(lexer_module, "SPACE_DEL", set(" \t\r\n"))
+    while lexer.current() is not None:
+        if lexer.current() in whitespace:
+            lexer.advance()
+            continue
+        before = lexer.pos
+        lexer.tokens.append(lexer.scan_word())
+        if lexer.pos == before:                  # guard: never loop in place
+            raise LexerError(
+                f"Scanner stalled at {lexer.current()!r}.", lexer.line, lexer.col
+            )
+    return lexer.tokens
+
+
+def _scan_into(lexer: Lexer, result: dict) -> None:
+    """Thread body: run the scan and stash either tokens or the exception."""
+    try:
+        result["tokens"] = _run_lexer(lexer)
+    except Exception as exc:                     # noqa: BLE001 (re-raised via JSON)
+        result["error"] = exc
+
+
+def error_line(exc: Exception) -> int:
+    """Line of a LexerError, tolerant of builds that omit/rename the field."""
+    return int(getattr(exc, "line", 0) or 0)
+
+
+def error_column(exc: Exception) -> int:
+    """Column of a LexerError, accepting either ``.column`` or ``.col``."""
+    return int(getattr(exc, "column", getattr(exc, "col", 0)) or 0)
+
+
+_ERROR_TEXT_RE = re.compile(r"^Lexical Error \[Line \d+, Col \d+: (.*)\]$", re.DOTALL)
+
+
 def inner_message(exc: LexerError) -> str:
     """Return only the diagnostic text, without LexerError's ``[...]`` wrapper.
 
     LexerError renders itself as "Lexical Error [Line L, Col C: <message>]",
     but the UI re-formats errors as "line #L:C - <message>", so it needs just
-    the bare <message>.  Falls back to the raw text if the shape is unexpected.
+    the bare <message>.  Prefers an explicit ``.message`` when a build stores
+    one, then unwraps the rendered form, and finally falls back to raw text.
     """
+    message = getattr(exc, "message", None)
+    if isinstance(message, str) and message:
+        return message
     raw = str(exc)
-    prefix = f"Lexical Error [Line {exc.line}, Col {exc.column}: "
-    if raw.startswith(prefix) and raw.endswith("]"):
-        return raw[len(prefix):-1]
+    match = _ERROR_TEXT_RE.match(raw)
+    if match:
+        return match.group(1)
     return raw
 
 
@@ -90,21 +164,43 @@ def tokenize():
         }), 400
 
     lexer = Lexer(source)
-    try:
-        tokens = lexer.tokenize()
-    except LexerError as exc:
+
+    # Run the scan on a worker thread so a scanner that never returns (a keyword
+    # prefix sitting against an invalid delimiter, say) cannot wedge the request.
+    result: dict = {}
+    worker = threading.Thread(
+        target=_scan_into, args=(lexer, result), daemon=True
+    )
+    worker.start()
+    worker.join(SCAN_TIMEOUT_SECONDS)
+
+    if worker.is_alive():                          # abandoned; report, don't hang
+        return jsonify({
+            "ok": False,
+            "tokens": serialize(list(lexer.tokens)),
+            "error": {
+                "message": ("Scanning timed out -- the source may contain input "
+                            "the scanner cannot advance past."),
+                "line": error_line(lexer),
+                "column": error_column(lexer),
+                "formatted": "Lexical Error: scan timed out.",
+            },
+        })
+
+    exc = result.get("error")
+    if isinstance(exc, LexerError):
         # Keep whatever was scanned before the failure -- it helps debugging.
         return jsonify({
             "ok": False,
             "tokens": serialize(lexer.tokens),
             "error": {
                 "message": inner_message(exc),
-                "line": exc.line,
-                "column": exc.column,
+                "line": error_line(exc),
+                "column": error_column(exc),
                 "formatted": str(exc),
             },
         })
-    except Exception as exc:                       # defensive: never 500 mid-scan
+    if exc is not None:                            # defensive: never 500 mid-scan
         return jsonify({
             "ok": False,
             "tokens": serialize(getattr(lexer, "tokens", [])),
@@ -116,7 +212,11 @@ def tokenize():
             },
         })
 
-    return jsonify({"ok": True, "tokens": serialize(tokens), "error": None})
+    return jsonify({
+        "ok": True,
+        "tokens": serialize(result.get("tokens", lexer.tokens)),
+        "error": None,
+    })
 
 
 # --- Inline page (light neo-brutalism) ------------------------------------- #
@@ -501,21 +601,41 @@ PAGE = r"""<!doctype html>
 
   var errorLine = 0;   // 1-based source line flagged red in the gutter; 0 = none
 
-  /* ---- lexical token-type colours (by type only, never by grammar) ---- */
+  /* ---- lexical token-type colours (by type only, never by grammar) ----
+     Reserved words (RW_*) and reserved symbols/operators (RS_*) are matched
+     by prefix, so every newly introduced member of those families is coloured
+     automatically.  Literals and identifiers carry exact entries, and anything
+     unmapped still falls back to a readable default -- no token is unstyled. */
   var TYPE_COLORS = {
-    KEYWORD: "#7C3AED", IDENTIFIER: "#1F2937", EOF: "#8E7BC0",
-    AURA_LIT: "#0E7C8A", NULL_LIT: "#0E7C8A", AETHER_LIT: "#0E7C8A",
-    ESSENCE_LIT: "#0E7C8A", GLYPH_LIT: "#0E7C8A", INSCRIPTION_LIT: "#0E7C8A",
-    MATH_OP: "#B45309", REL_OP: "#B45309", LOG_OP: "#B45309", NOT_OP: "#B45309",
-    ASSIGN_OP: "#0E9F6E", ADD_ASSIGN: "#0E9F6E", SUB_ASSIGN: "#0E9F6E",
-    MUL_ASSIGN: "#0E9F6E", DIV_ASSIGN: "#0E9F6E", MOD_ASSIGN: "#0E9F6E",
-    INC_OP: "#0E9F6E", DEC_OP: "#0E9F6E",
-    OPEN_PAREN: "#1D4ED8", CLOSE_PAREN: "#1D4ED8", OPEN_CURLY: "#1D4ED8",
-    CLOSE_CURLY: "#1D4ED8", OPEN_BRACKET: "#1D4ED8", CLOSE_BRACKET: "#1D4ED8",
-    TERMINATOR: "#BE185D", COMMA: "#BE185D", DOT: "#BE185D", DIRECTIVE_HASH: "#BE185D"
+    IDENTIFIER:      "#4F46E5",   // dark violet
+    AETHER_LITERAL:  "#2563EB",   // royal blue  (integer literal)
+    ESSENCE_LITERAL: "#2563EB",   // royal blue  (float literal)
+    LIT_INSCRIPTION: "#D97706",   // warm gold / amber (string literal)
+    COMMENT:         "#8E7BC0",   // muted violet (filtered out upstream)
+    EOF:             "#8E7BC0"
   };
 
-  function typeColor(type) { return TYPE_COLORS[type] || "#51308B"; }
+  var PREFIX_COLORS = [
+    ["RW_", "#7C3AED"],   // reserved words            -> deep lavender
+    ["RS_", "#059669"],   // reserved symbols/operators -> emerald green
+    ["LIT_", "#D97706"]   // string literals           -> warm gold / amber
+  ];
+
+  var DEFAULT_COLOR = "#51308B";   // any unlisted type still renders styled
+
+  function typeColor(type) {
+    if (typeof type === "string") {
+      if (Object.prototype.hasOwnProperty.call(TYPE_COLORS, type)) {
+        return TYPE_COLORS[type];
+      }
+      for (var i = 0; i < PREFIX_COLORS.length; i++) {
+        if (type.indexOf(PREFIX_COLORS[i][0]) === 0) {
+          return PREFIX_COLORS[i][1];
+        }
+      }
+    }
+    return DEFAULT_COLOR;
+  }
 
   /* Escape control characters so every lexeme stays on one table row.
      EOF carries no source text, so its type name stands in for the value. */
