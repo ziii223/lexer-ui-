@@ -1152,16 +1152,31 @@ class Lexer:
         state = 0
         start_col = self.col
         lexeme = ""
-
+    
         while True:
             ch = self.current()
-
+    
+            # ROOT STATE 0: '0' -> 294, or optional '~' (or nothing) -> 296
             if state == 0:
                 if ch == "0": lexeme += self.advance(); state = 294
+                elif ch == "~": lexeme += self.advance(); state = 296
                 elif ch is not None and ch in NONZERO: lexeme += self.advance(); state = 298
                 else: raise LexerError(f"Unexpected character {repr(ch)} in number", self.line, start_col)
-
-            # '0' (294 -> 295*) or '0.' (297 -> 329)
+    
+            # after '~' (296): '0' -> 297, nonzero -> 298
+            elif state == 296:
+                if ch == "0": lexeme += self.advance(); state = 297
+                elif ch is not None and ch in NONZERO: lexeme += self.advance(); state = 298
+                else: raise LexerError(f"Expected a digit after '~' in '{lexeme}'", self.line, self.col)
+    
+            # '~0' (297): only valid as the start of a float ('~0.'), never as an aether literal
+            elif state == 297:
+                if ch == ".": lexeme += self.advance(); state = 329
+                elif ch is not None and ch in NUMBERS:
+                    raise LexerError(f"Leading zeros are not allowed ('{lexeme}{ch}')", self.line, start_col)
+                else: raise LexerError(f"'{lexeme}' must be followed by '.' (negative zero is not a valid aether literal)", self.line, self.col)
+    
+            # '0' (294 -> 295*) or '0.' (-> 329)
             elif state == 294:
                 if ch == ".": lexeme += self.advance(); state = 329
                 elif ch is None or ch in AETHER_LIT_DEL:
@@ -1170,7 +1185,7 @@ class Lexer:
                 elif ch in NUMBERS:
                     raise LexerError(f"Leading zeros are not allowed ('{lexeme}{ch}')", self.line, start_col)
                 else: raise LexerError(f"Invalid delimiter '{ch}' after aether literal '{lexeme}'", self.line, self.col)
-
+    
             elif state == 298 or (299 <= state <= 327 and state % 2 == 1):
                 if ch is not None and ch in NUMBERS:
                     if state == 327:
@@ -1186,34 +1201,34 @@ class Lexer:
                     state = state + 1
                     return Token("AETHER_LITERAL", lexeme, self.line, start_col)
                 else: raise LexerError(f"Invalid delimiter '{ch}' after aether literal '{lexeme}'", self.line, self.col)
-
+    
+            # after '.' (329): need at least one fractional digit.
+            # Diagram: '0' -> 330* (".0"), otherwise digits (331 ... 352) ending in a nonzero digit.
             elif state == 329:
-                if ch is not None and ch in NUMBERS: lexeme += self.advance(); state = 331
-                else: raise LexerError(f"Expected a digit after '.' in '{lexeme}'", self.line, self.col)
-
-            elif 331 <= state <= 346 and (state - 331) % 3 == 0:
                 if ch is not None and ch in NUMBERS:
                     lexeme += self.advance()
-                    state = 347 if state == 346 else state + 3
-                    if state == 347 and lexeme[-1] == "0":
-                        raise LexerError(f"Essence literal '{lexeme}' cannot end in 0", self.line, start_col)
+                    frac_len = 1
+                    state = 331
+                else: raise LexerError(f"Expected a digit after '.' in '{lexeme}'", self.line, self.col)
+    
+            # fractional digits (331 -> 352): rows 331, 334, ..., 352 = digit 1..8
+            # any digit may be consumed (the 'numbers' edge), the literal may only END on a
+            # nonzero digit (the 'nonzero' edge), except the lone ".0" (329 -'0'-> 330*).
+            elif state == 331:
+                if ch is not None and ch in NUMBERS:
+                    if frac_len == 8:
+                        raise LexerError(
+                            f"Essence literal '{lexeme}{ch}' exceeds maximum of 8 fractional digits",
+                            self.line,
+                            start_col,
+                        )
+                    lexeme += self.advance()
+                    frac_len += 1
                 elif ch is None or ch in ESSENCE_LIT_DEL:
                     frac = lexeme.split(".")[1]
-                    if frac[-1] == "0" and frac != "0":
+                    if frac != "0" and frac[-1] == "0":
                         raise LexerError(f"Essence literal '{lexeme}' cannot end in 0", self.line, start_col)
                     return Token("ESSENCE_LITERAL", lexeme, self.line, start_col)
-                else: raise LexerError(f"Invalid delimiter '{ch}' after essence literal '{lexeme}'", self.line, self.col)
-
-            elif state == 347:
-                if ch is None or ch in ESSENCE_LIT_DEL:
-                    state = 348
-                    return Token("ESSENCE_LITERAL", lexeme, self.line, start_col)
-                elif ch in NUMBERS:
-                    raise LexerError(
-                        f"Essence literal '{lexeme}{ch}' exceeds maximum of 7 fractional digits",
-                        self.line,
-                        start_col,
-                    )
                 else: raise LexerError(f"Invalid delimiter '{ch}' after essence literal '{lexeme}'", self.line, self.col)
 
     def scan_string(self) -> Token:
@@ -1261,12 +1276,12 @@ class Lexer:
             ch = self.current()
 
             if state == 0:
-                if ch == "/": lexeme += self.advance(); state = 352
-                else: raise LexerError(f"Unexpected character {repr(ch)} (expected '/#')", self.line, start_col)
+                if ch == "#": lexeme += self.advance(); state = 352
+                else: raise LexerError(f"Unexpected character {repr(ch)} (expected '#/')", self.line, start_col)
 
             elif state == 352:
-                if ch == "#": lexeme += self.advance(); state = 353
-                else: raise LexerError(f"Invalid delimiter '{ch}' after '/'", self.line, self.col)
+                if ch == "/": lexeme += self.advance(); state = 353
+                else: raise LexerError(f"Invalid delimiter '{ch}' after '#'", self.line, self.col)
 
             elif state == 353:
                 if ch is None:
@@ -1296,9 +1311,9 @@ def tokenize(self) -> List[Token]:
             continue
 
         if ch in LETTERS: token = self.scan_word()
-        elif ch in NUMBERS: token = self.scan_number()
+        elif ch in NUMBERS or (ch == "~" and self.peek() in NUMBERS): token = self.scan_number()
         elif ch in OPEN_QUOTE: token = self.scan_string()
-        elif ch == "/" and self.peek() == "#": token = self.scan_comment()   
+        elif ch == "#" and self.peek() == "/": token = self.scan_comment()
         else: token = self.scan_symbol()
 
         if token.type != "COMMENT":

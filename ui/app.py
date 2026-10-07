@@ -17,8 +17,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import Lexer as lexer_module                     # noqa: E402  (path set above)
-from Lexer import Lexer, LexerError, Token       # noqa: E402  (path set above)
+from Lexer import Lexer, LexerError, Token, tokenize   # noqa: E402  (path set above)
 
 app = Flask(__name__)
 
@@ -44,41 +43,16 @@ def serialize(tokens: list[Token]) -> list[dict]:
 def _run_lexer(lexer: Lexer) -> list[Token]:
     """Drive the backend tokenizer and return every token it produced.
 
-    The driver's shape has varied across Lexer builds, so resolve it in order:
+    ``Lexer.py`` defines ``tokenize`` as a *module-level* function taking the
+    lexer instance as its argument (``def tokenize(self)``), so it must be
+    called as ``tokenize(lexer)`` -- calling ``lexer.tokenize()`` would raise
+    ``AttributeError: 'Lexer' object has no attribute 'tokenize'``.
 
-      1. ``lexer.tokenize()``             -- bound method / instance attribute
-      2. ``lexer_module.tokenize(lexer)`` -- module-level ``def tokenize(self)``
-      3. scanner-only fallback            -- drive ``scan_word`` directly
-
-    However it is invoked, tokens accumulate on ``lexer.tokens`` as they are
-    emitted, so a mid-scan ``LexerError`` still leaves the partial stream on the
-    instance for the caller to serialize.
+    Tokens accumulate on ``lexer.tokens`` as they are emitted, so a mid-scan
+    ``LexerError`` still leaves the partial stream on the instance for the
+    caller to serialize.
     """
-    # 1) bound method: lexer.tokenize()
-    driver = getattr(lexer, "tokenize", None)
-    if callable(driver):
-        return driver()
-
-    # 2) module-level function: tokenize(self) / lexer_module.tokenize(lexer)
-    driver = getattr(lexer_module, "tokenize", None)
-    if callable(driver):
-        return driver(lexer)
-
-    # 3) last resort for scanner-only builds (no tokenize driver at all): drive
-    #    the exposed scanner ourselves -- skip whitespace (the scanner stops
-    #    *before* a delimiter) and hand every other character to scan_word.
-    whitespace = getattr(lexer_module, "SPACE_DEL", set(" \t\r\n"))
-    while lexer.current() is not None:
-        if lexer.current() in whitespace:
-            lexer.advance()
-            continue
-        before = lexer.pos
-        lexer.tokens.append(lexer.scan_word())
-        if lexer.pos == before:                  # guard: never loop in place
-            raise LexerError(
-                f"Scanner stalled at {lexer.current()!r}.", lexer.line, lexer.col
-            )
-    return lexer.tokens
+    return tokenize(lexer)
 
 
 def _scan_into(lexer: Lexer, result: dict) -> None:
@@ -139,8 +113,11 @@ def serve_middle_logo():
 
 
 @app.post("/tokenize")
-def tokenize():
+def tokenize_endpoint():
     """Lexically scan raw source; failures are returned as JSON, never raised.
+
+    Named ``tokenize_endpoint`` (not ``tokenize``) so the view never shadows the
+    module-level ``tokenize`` driver imported from ``Lexer.py``.
 
     Request  : {"code": "<source text>"}
     Response : {"ok": bool, "tokens": [...], "error": null | {...}}
@@ -607,10 +584,10 @@ PAGE = r"""<!doctype html>
      automatically.  Literals and identifiers carry exact entries, and anything
      unmapped still falls back to a readable default -- no token is unstyled. */
   var TYPE_COLORS = {
-    IDENTIFIER:      "#4F46E5",   // dark violet
-    AETHER_LITERAL:  "#2563EB",   // royal blue  (integer literal)
-    ESSENCE_LITERAL: "#2563EB",   // royal blue  (float literal)
-    LIT_INSCRIPTION: "#D97706",   // warm gold / amber (string literal)
+    IDENTIFIER:      "#4F46E5",   // indigo       (variables)
+    AETHER_LITERAL:  "#2563EB",   // royal blue   (integer literal)
+    ESSENCE_LITERAL: "#0284C7",   // sky blue     (float literal)
+    LIT_INSCRIPTION: "#D97706",   // warm amber   (string literal)
     COMMENT:         "#8E7BC0",   // muted violet (filtered out upstream)
     EOF:             "#8E7BC0"
   };
