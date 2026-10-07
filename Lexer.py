@@ -1300,6 +1300,26 @@ class Lexer:
                     return Token("COMMENT", lexeme, start_line, start_col)
                 raise LexerError(f"Invalid delimiter '{ch}' after comment", self.line, self.col)
 
+    def check_entry_point(self) -> None:
+        first = None
+        for i, tok in enumerate(self.tokens):
+            if tok.type != "RW_GRIMOIRE":
+                continue
+            after = self.tokens[i + 1:i + 3]
+            if (len(after) < 2
+                    or after[0].type != "RS_OPEN_PARENTHESIS"
+                    or after[1].type != "RS_CLOSE_PARENTHESIS"):
+                raise LexerError("Entry point must be written as grimoire()", tok.line, tok.column)
+            if first is not None:
+                raise LexerError(
+                    f"Duplicate entry point grimoire() (first one is on line {first.line})",
+                    tok.line,
+                    tok.column,
+                )
+            first = tok
+        if first is None:
+            raise LexerError("Missing entry point: grimoire() was not found", self.line, self.col)
+
 # ========== TOKENIZER ==========
 def tokenize(self) -> List[Token]:
     while True:
@@ -1318,6 +1338,8 @@ def tokenize(self) -> List[Token]:
 
         if token.type != "COMMENT":
             self.tokens.append(token)
+
+    self.check_entry_point()
     return self.tokens
                 
                 
