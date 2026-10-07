@@ -12,8 +12,11 @@ import threading
 
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
+# --- the ``ui/`` folder itself; the navbar PNGs live beside this file --- #
+_UI_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # --- make ``Lexer.py`` (one level up) importable, however we are launched --- #
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_ROOT = os.path.dirname(_UI_DIR)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -100,16 +103,16 @@ def index():
     return render_template_string(PAGE, sample_program=SAMPLE_PROGRAM)
 
 
-@app.get("/logo-topleft.png")
+@app.get("/LOGO TOPLEFT.png")
 def serve_logo_topleft():
-    """Top-left navbar mark, served from the project root."""
-    return send_from_directory(_PROJECT_ROOT, "LOGO TOPLEFT.png")
+    """Top-left navbar mark -- route mirrors the on-disk name in ``ui/``."""
+    return send_from_directory(_UI_DIR, "LOGO TOPLEFT.png")
 
 
-@app.get("/middle.png")
+@app.get("/MIDDLE.png")
 def serve_middle_logo():
-    """Centered navbar wordmark, served from the project root."""
-    return send_from_directory(_PROJECT_ROOT, "MIDDLE.png")
+    """Centered navbar wordmark -- route mirrors the on-disk name in ``ui/``."""
+    return send_from_directory(_UI_DIR, "MIDDLE.png")
 
 
 @app.post("/tokenize")
@@ -505,9 +508,9 @@ PAGE = r"""<!doctype html>
 
   <header class="nav">
     <div class="brand">
-      <div class="brand-slot"><img src="/logo-topleft.png" alt="Magi-C Logo"></div>
+      <div class="brand-slot"><img src="/LOGO%20TOPLEFT.png" alt="Magi-C Logo"></div>
     </div>
-    <div class="nav-mid-slot"><img src="/middle.png" alt="Magi-C Lexical Analyzer"></div>
+    <div class="nav-mid-slot"><img src="/MIDDLE.png" alt="Magi-C Lexical Analyzer"></div>
     <nav class="tabs">
       <span class="tab active">LEXICAL</span>
     </nav>
