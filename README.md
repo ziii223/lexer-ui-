@@ -4,18 +4,44 @@ A single-file Flask app that drives the existing `Lexer.py` scanner and renders
 the token stream in the browser. It is a **pure lexical viewer**: no parsing,
 grammar validation, AST building, or execution logic exists anywhere here.
 
-## Run
+## How to Run
 
-From the project root (the folder containing `Lexer.py`):
+1. If you haven't cloned the repo, clone the repo.
+
+```bash
+git clone https://github.com/ziii223/lexer-ui-.git
+cd lexer-ui-
+```
+If you already have the repo in your machine, pull the latest repo.
+```bash
+git pull origin main
+```
+
+2. Create a virtual environment and activate it.
+
+```bash
+python -m venv venv
+
+# Windows
+.\venv\Scripts\activate.
+
+# Linux/macOS
+source venv/bin/activate
+```
+
+3. Install the library (flask) required to run the app.
+
+```bash
+pip install -r requirements.txt
+```
+
+4. From the project root, run the app.
 
 ```bash
 python ui/app.py
 ```
 
-Then open **http://localhost:5000**.
-
-Requires Flask (`pip install flask`). All HTML / CSS / JS is inlined via
-`render_template_string` — there are no `templates/` or `static/` directories.
+5. Then open **http://localhost:5000**.
 
 ## HTTP API
 
