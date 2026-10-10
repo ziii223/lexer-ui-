@@ -192,10 +192,21 @@ def tokenize_endpoint():
             },
         })
 
+    # The lexer no longer stops at the first error: it records all of them in lexer.errors.
+    errors = [
+        {
+            "message": inner_message(e),
+            "line": error_line(e),
+            "column": error_column(e),
+            "formatted": str(e),
+        }
+        for e in getattr(lexer, "errors", [])
+    ]
     return jsonify({
-        "ok": True,
+        "ok": not errors,
         "tokens": serialize(result.get("tokens", lexer.tokens)),
-        "error": None,
+        "error": errors[0] if errors else None,   # first error, kept for older clients
+        "errors": errors,
     })
 
 
@@ -579,7 +590,7 @@ PAGE = r"""<!doctype html>
   var statusBadge = document.getElementById("statusBadge");
   var runBtn     = document.getElementById("runBtn");
 
-  var errorLine = 0;   // 1-based source line flagged red in the gutter; 0 = none
+  var errorLines = {};   // 1-based source lines flagged red in the gutter (empty = none)
 
   /* ---- lexical token-type colours (by type only, never by grammar) ----
      Reserved words (RW_*) and reserved symbols/operators (RS_*) are matched
@@ -633,7 +644,7 @@ PAGE = r"""<!doctype html>
     var lines = codeEl.value.split("\n").length;
     var html = "";
     for (var i = 1; i <= lines; i++) {
-      html += '<span class="ln' + (i === errorLine ? " err" : "") + '">' + i + "</span>";
+      html += '<span class="ln' + (errorLines[i] ? " err" : "") + '">' + i + "</span>";
     }
     gutterEl.innerHTML = html;
     syncScroll();
@@ -707,20 +718,29 @@ PAGE = r"""<!doctype html>
   function handleResult(data) {
     var tokens = data.tokens || [];
 
-    if (data.error) {
-      errorLine = data.error.line || 0;
+    var errs = data.errors || (data.error ? [data.error] : []);
+
+    if (errs.length) {
+      errorLines = {};
+      for (var k = 0; k < errs.length; k++) {
+        if (errs[k].line) { errorLines[errs[k].line] = true; }
+      }
       renderTokens(tokens);
       updateGutter();
       setStatus("ERROR", "error");
       clearConsole();
       // Fixed diagnostic format:  line #<line>:<col> - <message>
-      log("err", "line #" + data.error.line + ":" + data.error.column +
-                 " - " + data.error.message);
-      scrollToLine(errorLine);
+      for (var j = 0; j < errs.length; j++) {
+        log("err", "line #" + errs[j].line + ":" + errs[j].column +
+                   " - " + errs[j].message);
+      }
+      log("info", errs.length + (errs.length === 1 ? " error" : " errors") +
+                  ". Total Tokens: " + tokens.length);
+      scrollToLine(errs[0].line || 0);
       return;
     }
 
-    errorLine = 0;
+    errorLines = {};
     renderTokens(tokens);
     updateGutter();
     setStatus("SUCCESS", "ok");
@@ -734,7 +754,7 @@ PAGE = r"""<!doctype html>
 
     if (!source.trim()) {
       renderTokens([]);
-      errorLine = 0;
+      errorLines = {};
       updateGutter();
       setStatus("IDLE", "idle");
       clearConsole();
